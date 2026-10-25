@@ -2519,6 +2519,7 @@ fi
 mkdir -p /etc/s-box
 v6
 openyn
+openbbr
 inssb
 inscertificate
 insport
@@ -4019,9 +4020,53 @@ cfwarp(){
 #bash <(curl -Ls https://gitlab.com/rwkgyg/CFwarp/raw/main/CFwarp.sh)
 bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/warp-yg/main/CFwarp.sh)
 }
+openbbr(){
+if [[ $vi =~ lxc|openvz ]]; then
+yellow "当前VPS的架构为 $vi，内核参数不可写，跳过BBR优化"
+return
+fi
+modprobe tcp_bbr >/dev/null 2>&1
+[[ -f /etc/modules-load.d/tcp_bbr.conf ]] || echo "tcp_bbr" > /etc/modules-load.d/tcp_bbr.conf
+cat > /etc/sysctl.d/99-bbr-optimize.conf <<EOF
+# ===== Sing-box-yg 网络优化：BBR + fq + TCP调优 =====
+# 拥塞控制：开启BBR，丢包/高延迟链路下提升TCP吞吐量，避免下载中途掉速
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+# 加大收发缓冲区
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+# 长肥管道优化
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_fastopen = 3
+# 连接复用与回收
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.ip_local_port_range = 1024 65535
+net.core.somaxconn = 8192
+net.ipv4.tcp_max_syn_backlog = 8192
+EOF
+sysctl --system >/dev/null 2>&1
+for dev in $(ls /sys/class/net 2>/dev/null | grep -vE "^(lo|tun|wg|docker|br-)"); do
+tc qdisc replace dev "$dev" root fq >/dev/null 2>&1
+done
+if [[ $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null) = bbr ]]; then
+green "已开启BBR+FQ加速 (内核拥塞控制算法：bbr)"
+else
+yellow "当前内核不支持原版BBR，可在主菜单选项11执行内核BBR安装脚本"
+fi
+}
+
 bbr(){
 if [[ $vi =~ lxc|openvz ]]; then
-yellow "当前VPS的架构为 $vi，不支持开启原版BBR加速" && sleep 2 && exit 
+yellow "当前VPS的架构为 $vi，不支持开启原版BBR加速" && sleep 2 && return
+fi
+modprobe tcp_bbr >/dev/null 2>&1
+if [[ -n $(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep bbr) ]]; then
+openbbr
+sleep 2
 else
 green "点击任意键，即可开启BBR加速，ctrl+c退出"
 bash <(curl -Ls https://raw.githubusercontent.com/teddysun/across/master/bbr.sh)
@@ -4327,7 +4372,7 @@ green " 8. 更新/切换/指定 Sing-box 内核版本"
 white "----------------------------------------------------------------------------------"
 green " 9. 刷新并查看节点 【Mihomo/SFA+SFI+SFW三合一配置/订阅链接/推送TG通知】"
 green "10. 查看 Sing-box 运行日志"
-green "11. 一键原版BBR+FQ加速"
+green "11. 一键开启BBR+FQ加速"
 green "12. 管理 Acme 申请域名IP证书"
 green "13. 管理 Warp 查看Netflix/ChatGPT解锁情况"
 green "14. 添加 WARP-plus-Socks5 代理模式 【本地Warp/多地区Psiphon-VPN】"
